@@ -60,7 +60,7 @@
             border-color: #3a3f8a;
         }
         .pt-card-done {
-            outline: 2px solid #484FA370 !important;
+            outline: 2px solid #484FA3 !important;
             background: #484FA305 !important;
         }
         .pt-progress {
@@ -69,6 +69,7 @@
             color: #484FA3;
             font-weight: 600;
             padding: 6px 0 2px 0;
+            margin-bottom: 10px;
         }
         .pt-done-overlay {
             position: absolute;
