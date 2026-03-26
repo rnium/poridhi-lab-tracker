@@ -16,38 +16,52 @@
     const style = document.createElement('style');
     style.textContent = `
         .pt-done-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 5px 12px;
-            border-radius: 6px;
-            border: 1.5px solid #484FA3;
-            background: transparent;
+            position: absolute;
+            top: -15px;
+            right: -15px;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            border: 2px solid #484FA3;
+            background: white;
             color: #484FA3;
-            font-size: 13px;
-            font-weight: 500;
+            font-size: 16px;
+            font-weight: 700;
             font-family: Montserrat, sans-serif;
             cursor: pointer;
-            transition: all 0.15s ease;
-            white-space: nowrap;
-            flex-shrink: 0;
-            z-index: 10;
-            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            line-height: 1;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease, background 0.15s ease;
+            z-index: 30;
+        }
+        [data-pt]:hover .pt-done-btn {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        [data-pt]:hover .pt-done-overlay {
+            opacity: 1;
         }
         .pt-done-btn:hover {
-            background: #484FA310;
+            background: #484FA3;
+            color: #fff;
         }
         .pt-done-btn.pt-done {
             background: #484FA3;
             color: #fff;
+            border-color: #484FA3;
         }
         .pt-done-btn.pt-done:hover {
             background: #3a3f8a;
             border-color: #3a3f8a;
         }
         .pt-card-done {
-            outline: 2px solid #484FA350 !important;
-            background: #484FA308 !important;
+            outline: 2px solid #484FA370 !important;
+            background: #484FA305 !important;
         }
         .pt-progress {
             font-size: 12px;
@@ -59,7 +73,7 @@
         .pt-done-overlay {
             position: absolute;
             top: 8px;
-            right: 8px;
+            left: 8px;
             background: #484FA3;
             color: #fff;
             font-size: 11px;
@@ -69,6 +83,7 @@
             border-radius: 4px;
             z-index: 20;
             pointer-events: none;
+            opacity: 0;
         }
     `;
     document.head.appendChild(style);
@@ -93,15 +108,15 @@
         const btn = document.createElement('button');
         const done = isDone(title);
         btn.className = 'pt-done-btn' + (done ? ' pt-done' : '');
-        btn.textContent = done ? '✓ Done' : '○ Mark done';
-        btn.title = title;
+        btn.textContent = '✓';
+        btn.title = done ? 'Mark as incomplete' : 'Mark as done';
 
         btn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
             const nowDone = toggleDone(title);
             btn.className = 'pt-done-btn' + (nowDone ? ' pt-done' : '');
-            btn.textContent = nowDone ? '✓ Done' : '○ Mark done';
+            btn.title = nowDone ? 'Mark as incomplete' : 'Mark as done';
             if (onToggle) onToggle(nowDone);
         });
 
