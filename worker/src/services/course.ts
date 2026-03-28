@@ -1,6 +1,3 @@
-interface CourseModules extends Record<string, boolean> {
-}
-
 export async function getCourseModules(env: Env, courseId: string): Promise<CourseModules | null> {
     const courseData = await env.PORIDHI_LT.get(courseId)
     if (!courseData) return null

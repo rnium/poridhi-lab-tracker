@@ -1,6 +1,3 @@
-interface ModulesLabs extends Record<string, boolean> {
-}
-
 export async function getModuleLabs(env: Env, moduleId: string): Promise<ModulesLabs | null> {
     const moduleData = await env.PORIDHI_LT.get(moduleId)
     if (!moduleData) return null
