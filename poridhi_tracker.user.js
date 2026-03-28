@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Poridhi Lab Tracker
 // @namespace    http://tampermonkey.net/
-// @version      0.1.1
+// @version      0.1.2
 // @description  Mark labs and modules as done/incomplete on poridhi.io
 // @author       Md. Saiful Islam Roni
 // @match        https://poridhi.io/*
@@ -89,25 +89,66 @@
     `;
     document.head.appendChild(style);
 
-    // ── Storage ───────────────────────────────────────────────────────────────
-    function storageKey(title) {
-        return 'pt_' + title.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    // ── ID helpers ────────────────────────────────────────────────────────────
+    // course_id  : raw first URL segment  e.g. "abc123"
+    // module_id  : course_id + '_' + sanitized(moduleTitle)
+    // lab_id     : sanitized(labTitle)
+    function sanitizeId(text) {
+        return text.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
     }
 
-    function isDone(title) {
-        return GM_getValue(storageKey(title), false);
+    function getCourseId() {
+        const match = window.location.pathname.match(/\/lab-group-modules\/([^/]+)/);
+        return match ? match[1] : null;
     }
 
-    function toggleDone(title) {
-        const next = !isDone(title);
-        GM_setValue(storageKey(title), next);
+    function buildModuleId(courseId, moduleTitle) {
+        return courseId + '_' + sanitizeId(moduleTitle);
+    }
+
+    // ── Storage helpers ───────────────────────────────────────────────────────
+    // Module labs data  — key: moduleId  → value: { [labId]: bool, … }
+    function getModuleData(moduleId) {
+        return GM_getValue(moduleId, {});
+    }
+    function setModuleData(moduleId, data) {
+        GM_setValue(moduleId, data);
+    }
+
+    // Course modules data — key: courseId → value: { [moduleId]: bool, … }
+    function getCourseData(courseId) {
+        return GM_getValue(courseId, {});
+    }
+    function setCourseData(courseId, data) {
+        GM_setValue(courseId, data);
+    }
+
+    function isLabDone(moduleId, labId) {
+        return !!getModuleData(moduleId)[labId];
+    }
+
+    function isModuleDone(courseId, moduleId) {
+        return !!getCourseData(courseId)[moduleId];
+    }
+
+    // Toggle a lab and propagate all-done status up to the course record
+    function toggleLab(courseId, moduleId, labId) {
+        const moduleData = getModuleData(moduleId);
+        const next = !moduleData[labId];
+        moduleData[labId] = next;
+        setModuleData(moduleId, moduleData);
+
+        const allDone = Object.keys(moduleData).length > 0
+                     && Object.values(moduleData).every(v => v === true);
+        const courseData = getCourseData(courseId);
+        courseData[moduleId] = allDone;
+        setCourseData(courseId, courseData);
         return next;
     }
 
     // ── Toggle button factory ─────────────────────────────────────────────────
-    function makeBtn(title, onToggle) {
+    function makeBtn(done, onClick) {
         const btn = document.createElement('button');
-        const done = isDone(title);
         btn.className = 'pt-done-btn' + (done ? ' pt-done' : '');
         btn.textContent = '✓';
         btn.title = done ? 'Mark as incomplete' : 'Mark as done';
@@ -115,59 +156,13 @@
         btn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            const nowDone = toggleDone(title);
-            btn.className = 'pt-done-btn' + (nowDone ? ' pt-done' : '');
-            btn.title = nowDone ? 'Mark as incomplete' : 'Mark as done';
-            if (onToggle) onToggle(nowDone);
+            onClick(btn);
         });
 
         return btn;
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // MODULES PAGE  — URL: /lab-group-modules/{id}  (no second segment)
-    // Card: div.rounded-[6px].bg-white.font-ibm
-    // Title: h3
-    // Button row: the parent of the "See All Labs" <button>
-    // ══════════════════════════════════════════════════════════════════════════
-    function injectModuleTrackers() {
-        const cards = document.querySelectorAll(
-            'div.rounded-\\[6px\\].bg-white.font-ibm:not([data-pt])'
-        );
-
-        let injected = 0;
-        cards.forEach(card => {
-            const titleEl = card.querySelector('h3');
-            if (!titleEl) return;
-            const title = titleEl.textContent.trim();
-            if (!title) return;
-
-            card.dataset.pt = '1';
-
-            // "See All Labs" button — its parent is our insertion point
-            const seeAllBtn = card.querySelector('button');
-            if (!seeAllBtn) return;
-            const btnContainer = seeAllBtn.parentElement;
-
-            if (isDone(title)) {
-                card.classList.add('pt-card-done');
-                ensureOverlay(card);
-            }
-
-            const btn = makeBtn(title, (nowDone) => {
-                card.classList.toggle('pt-card-done', nowDone);
-                if (nowDone) ensureOverlay(card);
-                else removeOverlay(card);
-                updateModuleProgress();
-            });
-
-            btnContainer.appendChild(btn);
-            injected++;
-        });
-
-        if (injected > 0) updateModuleProgress();
-    }
-
+    // ── Shared overlay helpers ────────────────────────────────────────────────
     function ensureOverlay(card) {
         if (!card.querySelector('.pt-done-overlay')) {
             const badge = document.createElement('div');
@@ -181,16 +176,51 @@
         card.querySelector('.pt-done-overlay')?.remove();
     }
 
-    function updateModuleProgress() {
+    // ══════════════════════════════════════════════════════════════════════════
+    // MODULES PAGE  — URL: /lab-group-modules/{courseId}
+    // Done state is derived entirely from lab completion — no manual button.
+    // Visual indication (border + badge) is preserved.
+    // ══════════════════════════════════════════════════════════════════════════
+    function injectModuleTrackers() {
+        const courseId = getCourseId();
+        if (!courseId) return;
+
+        const cards = document.querySelectorAll(
+            'div.rounded-\\[6px\\].bg-white.font-ibm:not([data-pt])'
+        );
+
+        let injected = 0;
+        cards.forEach(card => {
+            const titleEl = card.querySelector('h3');
+            if (!titleEl) return;
+            const title = titleEl.textContent.trim();
+            if (!title) return;
+
+            card.dataset.pt = '1';
+
+            const moduleId = buildModuleId(courseId, title);
+            if (isModuleDone(courseId, moduleId)) {
+                card.classList.add('pt-card-done');
+                ensureOverlay(card);
+            }
+
+            injected++;
+        });
+
+        if (injected > 0) updateModuleProgress(courseId);
+    }
+
+    function updateModuleProgress(courseId) {
         const cards = document.querySelectorAll(
             'div.rounded-\\[6px\\].bg-white.font-ibm[data-pt]'
         );
         if (!cards.length) return;
 
+        const courseData = getCourseData(courseId);
         let done = 0;
         cards.forEach(card => {
             const title = card.querySelector('h3')?.textContent.trim();
-            if (title && isDone(title)) done++;
+            if (title && courseData[buildModuleId(courseId, title)]) done++;
         });
 
         let bar = document.getElementById('pt-progress-bar');
@@ -198,7 +228,6 @@
             bar = document.createElement('div');
             bar.id = 'pt-progress-bar';
             bar.className = 'pt-progress';
-            // Insert before the card grid
             const grid = cards[0]?.closest('[class*="grid"]');
             if (grid) grid.insertAdjacentElement('beforebegin', bar);
         }
@@ -206,13 +235,34 @@
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // LABS PAGE  — URL: /lab-group-modules/{id}/{moduleId}
-    // Card: div.rounded-[6px].bg-white  (contains a <dt> title)
-    // Title: dt.text-base.font-semibold
+    // LABS PAGE  — URL: /lab-group-modules/{courseId}/{moduleSegment}
+    // Card: div.rounded-[6px].bg-white  (contains a <dt> title, not font-ibm)
     // Button row: div.flex.gap-2.items-center.w-full.font-montserrat
     // ══════════════════════════════════════════════════════════════════════════
+
+    // Resolve module title from the page heading; fall back to the URL segment.
+    // Both the modules page (h3 card title) and labs page heading must produce
+    // the same text so that buildModuleId() returns a consistent key.
+    function getModuleTitleOnLabsPage() {
+        const headings = Array.from(document.querySelectorAll('h1, h2'));
+        for (const h of headings) {
+            if (h.closest('div.rounded-\\[6px\\].bg-white')) continue;
+            const text = h.textContent.trim();
+            if (text) return text;
+        }
+        // Fallback: URL segment (may differ from card title sanitization)
+        const match = window.location.pathname.match(/\/lab-group-modules\/[^/]+\/([^/]+)/);
+        return match ? decodeURIComponent(match[1]) : null;
+    }
+
     function injectLabTrackers() {
-        // Lab cards are white rounded cards that contain a <dt> element (not font-ibm)
+        const courseId = getCourseId();
+        if (!courseId) return;
+
+        const moduleTitle = getModuleTitleOnLabsPage();
+        if (!moduleTitle) return;
+        const moduleId = buildModuleId(courseId, moduleTitle);
+
         const cards = document.querySelectorAll(
             'div.rounded-\\[6px\\].bg-white:not([data-pt]):not(.font-ibm)'
         );
@@ -224,19 +274,30 @@
             if (!title) return;
 
             card.dataset.pt = '1';
+            const labId = sanitizeId(title);
 
-            // Button row identified by exact Tailwind classes from the real HTML
             const btnRow = card.querySelector(
                 'div.flex.gap-2.items-center.w-full.font-montserrat'
             );
             if (!btnRow) return;
 
-            if (isDone(title)) {
+            // Register lab in module data with false if not yet seen
+            const moduleData = getModuleData(moduleId);
+            if (!(labId in moduleData)) {
+                moduleData[labId] = false;
+                setModuleData(moduleId, moduleData);
+            }
+
+            const done = isLabDone(moduleId, labId);
+            if (done) {
                 card.classList.add('pt-card-done');
                 ensureOverlay(card);
             }
 
-            const btn = makeBtn(title, (nowDone) => {
+            const btn = makeBtn(done, (btn) => {
+                const nowDone = toggleLab(courseId, moduleId, labId);
+                btn.className = 'pt-done-btn' + (nowDone ? ' pt-done' : '');
+                btn.title = nowDone ? 'Mark as incomplete' : 'Mark as done';
                 card.classList.toggle('pt-card-done', nowDone);
                 if (nowDone) ensureOverlay(card);
                 else removeOverlay(card);
@@ -250,8 +311,6 @@
     // Route detection & SPA watcher
     // ══════════════════════════════════════════════════════════════════════════
     function getPageType() {
-        // /lab-group-modules/ABC           → modules listing
-        // /lab-group-modules/ABC/XYZ       → labs listing inside a module
         const match = window.location.pathname.match(
             /\/lab-group-modules\/([^/]+)(\/([^/]+))?/
         );
@@ -271,7 +330,6 @@
     let lastPath = location.pathname;
     let debounce;
     new MutationObserver(() => {
-        // Route change
         if (location.pathname !== lastPath) {
             lastPath = location.pathname;
             run();
