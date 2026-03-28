@@ -13,6 +13,12 @@
 	"upload_source_maps": true,
 	"compatibility_flags": [
 		"nodejs_compat"
+	],
+	"kv_namespaces": [
+		{
+			"binding": "PORIDHI_LT",
+			"id": "a0b8b8ec672e4b9ba1c289ed30bebd52"
+		}
 	]
 	/**
 	 * Smart Placement

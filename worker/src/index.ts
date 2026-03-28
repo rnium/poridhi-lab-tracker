@@ -1,5 +1,6 @@
+import Router from "./routes";
+
+
 export default {
-	async fetch(request, env, ctx): Promise<Response> {
-		return new Response("Hello World!");
-	},
+	...Router
 } satisfies ExportedHandler<Env>;
