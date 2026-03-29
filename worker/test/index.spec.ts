@@ -79,19 +79,19 @@ describe("GET /modules/:moduleId/labs", () => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /modules/:moduleId/labs
+// POST /course/:courseId/modules/:moduleId/labs
 // ---------------------------------------------------------------------------
-describe("POST /modules/:moduleId/labs", () => {
-	function postLabs(moduleId: string, body: unknown) {
-		return new IncomingRequest(`http://example.com/modules/${moduleId}/labs`, {
+describe("POST /course/:courseId/modules/:moduleId/labs", () => {
+	function postLabs(courseId: string, moduleId: string, body: unknown) {
+		return new IncomingRequest(`http://example.com/course/${courseId}/modules/${moduleId}/labs`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(body),
 		});
 	}
 
-	it("returns 400 when courseId is missing from payload", async () => {
-		const req = postLabs("mod-1", { labId: "lab-1", done: true });
+	it("returns 400 when done is missing from payload", async () => {
+		const req = postLabs("course-1", "mod-1", [{ labId: "lab-1" }]);
 		const ctx = createExecutionContext();
 		const res = await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -99,7 +99,7 @@ describe("POST /modules/:moduleId/labs", () => {
 	});
 
 	it("returns 400 when labId is missing from payload", async () => {
-		const req = postLabs("mod-1", { courseId: "course-1", done: true });
+		const req = postLabs("course-1", "mod-1", [{ done: true }]);
 		const ctx = createExecutionContext();
 		const res = await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -107,7 +107,7 @@ describe("POST /modules/:moduleId/labs", () => {
 	});
 
 	it("returns 400 when done is not a boolean", async () => {
-		const req = postLabs("mod-1", { courseId: "course-1", labId: "lab-1", done: "yes" });
+		const req = postLabs("course-1", "mod-1", [{ labId: "lab-1", done: "yes" }]);
 		const ctx = createExecutionContext();
 		const res = await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -115,7 +115,7 @@ describe("POST /modules/:moduleId/labs", () => {
 	});
 
 	it("returns 200 with { success: true } on valid update", async () => {
-		const req = postLabs("mod-valid", { courseId: "course-valid", labId: "lab-1", done: true });
+		const req = postLabs("course-valid", "mod-valid", [{ labId: "lab-1", done: true }]);
 		const ctx = createExecutionContext();
 		const res = await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -126,7 +126,7 @@ describe("POST /modules/:moduleId/labs", () => {
 
 	it("persists lab completion status in KV", async () => {
 		const moduleId = "mod-persist";
-		const req = postLabs(moduleId, { courseId: "course-persist", labId: "lab-x", done: true });
+		const req = postLabs("course-persist", moduleId, [{ labId: "lab-x", done: true }]);
 		const ctx = createExecutionContext();
 		await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -143,7 +143,7 @@ describe("POST /modules/:moduleId/labs", () => {
 		// seed one lab already done
 		await env.PORIDHI_LT.put(moduleId, JSON.stringify({ "lab-1": true }));
 
-		const req = postLabs(moduleId, { courseId, labId: "lab-2", done: true });
+		const req = postLabs(courseId, moduleId, [{ labId: "lab-2", done: true }]);
 		const ctx = createExecutionContext();
 		await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -159,7 +159,7 @@ describe("POST /modules/:moduleId/labs", () => {
 		// seed one lab done, one undone
 		await env.PORIDHI_LT.put(moduleId, JSON.stringify({ "lab-1": true }));
 
-		const req = postLabs(moduleId, { courseId, labId: "lab-2", done: false });
+		const req = postLabs(courseId, moduleId, [{ labId: "lab-2", done: false }]);
 		const ctx = createExecutionContext();
 		await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -173,7 +173,7 @@ describe("POST /modules/:moduleId/labs", () => {
 		const moduleId = "mod-new-course";
 		const courseId = "course-brand-new";
 
-		const req = postLabs(moduleId, { courseId, labId: "lab-1", done: true });
+		const req = postLabs(courseId, moduleId, [{ labId: "lab-1", done: true }]);
 		const ctx = createExecutionContext();
 		await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -189,7 +189,7 @@ describe("POST /modules/:moduleId/labs", () => {
 		const courseId = "course-update-false";
 		await env.PORIDHI_LT.put(moduleId, JSON.stringify({ "lab-1": true }));
 
-		const req = postLabs(moduleId, { courseId, labId: "lab-1", done: false });
+		const req = postLabs(courseId, moduleId, [{ labId: "lab-1", done: false }]);
 		const ctx = createExecutionContext();
 		await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);

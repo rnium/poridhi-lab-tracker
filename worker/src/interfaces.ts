@@ -8,3 +8,8 @@ interface CourseModules extends Record<string, boolean> {
 
 interface ModulesLabs extends Record<string, boolean> {
 }
+
+interface LabInfo {
+    labId: string;
+    done: boolean;
+}

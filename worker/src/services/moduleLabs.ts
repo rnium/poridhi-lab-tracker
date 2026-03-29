@@ -8,9 +8,20 @@ async function setModuleLabs(env: Env, moduleId: string, labs: ModulesLabs): Pro
     await env.PORIDHI_LT.put(moduleId, JSON.stringify(labs))
 }
 
-export async function updateModuleLab(env: Env, moduleId: string, labKey: string, done: boolean): Promise<ModulesLabs> {
-    const existing = await getModuleLabs(env, moduleId) ?? {}
-    const updated: ModulesLabs = { ...existing, [labKey]: done }
-    await setModuleLabs(env, moduleId, updated)
+export async function updateModuleLabs(env: Env, moduleId: string, labs: LabInfo[]): Promise<ModulesLabs> {
+    const existingLabs = await getModuleLabs(env, moduleId) ?? {}
+    const updated: ModulesLabs = { ...existingLabs }
+    for (const { labId, done } of labs) {
+        if (typeof done !== "boolean" || !labId) {
+            throw new Error("labId and done(boolean) are required for each lab in the payload");
+        }
+        if (existingLabs[labId] !== done) {
+            updated[labId] = done
+        }
+    }
+    // Only update if there's a change to minimize unnecessary writes
+    if (Object.keys(updated).length > 0) {
+        await setModuleLabs(env, moduleId, updated)
+    }
     return updated
 }
