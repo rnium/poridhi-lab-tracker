@@ -1,6 +1,6 @@
 interface Env {
   PORIDHI_LT: KVNamespace;
-  ACCESS_KEY: string;
+  API_KEY: string;
 }
 
 interface CourseModules extends Record<string, boolean> {

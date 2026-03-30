@@ -35,7 +35,7 @@ export async function handleUpdateModuleLabs(req: IRequest, env: Env): Promise<R
         const payload: LabInfo[] = await req.json();        
         const updated = await updateModuleLabs(env, moduleId, payload);
         await syncModuleCompletion(env, courseId, moduleId, updated);
-        return json({ success: true });
+        return json(updated);
     } catch (err) {
         if (err instanceof Error && err.message.includes("labId and done")) {
             return error(400, err.message);
