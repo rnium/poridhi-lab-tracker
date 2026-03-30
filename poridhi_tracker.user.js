@@ -7,10 +7,24 @@
 // @match        https://poridhi.io/*
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_registerMenuCommand
 // ==/UserScript==
 
+const API_HOST = "http://localhost:8787"
+
 (function () {
-    'use strict';
+    'use strict';    
+
+    const GM_KEYNAME_APIKEY = "api-key"
+
+    // ---- MENU: SET SECRET ----
+    GM_registerMenuCommand("Set API Key", () => {
+        const key = prompt("Enter API Key:");
+        if (key) {
+        GM_setValue(GM_KEYNAME_APIKEY, key);
+        alert("API Key saved");
+        }
+    });
 
     // ── Styles ───────────────────────────────────────────────────────────────
     const style = document.createElement('style');
