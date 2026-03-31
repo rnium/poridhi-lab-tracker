@@ -1,16 +1,17 @@
 // ==UserScript==
 // @name         Poridhi Lab Tracker
 // @namespace    http://tampermonkey.net/
-// @version      0.1.2
+// @version      0.1.3-dev
 // @description  Mark labs and modules as done/incomplete on poridhi.io
 // @author       Md. Saiful Islam Roni
 // @match        https://poridhi.io/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_xmlhttpRequest
 // ==/UserScript==
 
-const API_HOST = "http://localhost:8787"
+const API_HOST = "http://localhost:8787";
 
 (function () {
     'use strict';    
@@ -100,12 +101,34 @@ const API_HOST = "http://localhost:8787"
             pointer-events: none;
             opacity: 0;
         }
+        .pt-sync-banner {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(40, 40, 50, 0.88);
+            color: #e0e0e0;
+            font-size: 12px;
+            font-family: Montserrat, sans-serif;
+            font-weight: 400;
+            padding: 8px 14px;
+            border-radius: 8px;
+            border-left: 3px solid #e06c6c;
+            z-index: 99999;
+            max-width: 300px;
+            backdrop-filter: blur(4px);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        .pt-sync-banner.pt-visible {
+            opacity: 1;
+        }
     `;
     document.head.appendChild(style);
 
     // ── ID helpers ────────────────────────────────────────────────────────────
     // course_id  : raw first URL segment  e.g. "abc123"
-    // module_id  : course_id + '_' + sanitized(moduleTitle)
+    // module_id  : raw second URL segment (labs page URL only)
     // lab_id     : sanitized(labTitle)
     function sanitizeId(text) {
         return text.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
@@ -116,8 +139,9 @@ const API_HOST = "http://localhost:8787"
         return match ? match[1] : null;
     }
 
-    function buildModuleId(courseId, moduleTitle) {
-        return courseId + '_' + sanitizeId(moduleTitle);
+    function getModuleIdFromUrl() {
+        const match = window.location.pathname.match(/\/lab-group-modules\/[^/]+\/([^/]+)/);
+        return match ? match[1] : null;
     }
 
     // ── Storage helpers ───────────────────────────────────────────────────────
@@ -135,6 +159,15 @@ const API_HOST = "http://localhost:8787"
     }
     function setCourseData(courseId, data) {
         GM_setValue(courseId, data);
+    }
+
+    // moduleNameIdMap — key: sanitized(h1Title) → value: moduleId (raw URL segment)
+    const GM_KEYNAME_MODULE_MAP = "moduleNameIdMap";
+    function getModuleNameIdMap() {
+        return GM_getValue(GM_KEYNAME_MODULE_MAP, {});
+    }
+    function setModuleNameIdMap(map) {
+        GM_setValue(GM_KEYNAME_MODULE_MAP, map);
     }
 
     function isLabDone(moduleId, labId) {
@@ -158,6 +191,167 @@ const API_HOST = "http://localhost:8787"
         courseData[moduleId] = allDone;
         setCourseData(courseId, courseData);
         return next;
+    }
+
+    // ── moduleNameIdMap updater ───────────────────────────────────────────────
+    // Polls every 100 ms for a non-empty h1 outside of a card, then stores
+    // sanitized(h1Text) → moduleId in moduleNameIdMap.  One poller per URL.
+    let _moduleMapUpdaterPath = null;
+    function startModuleNameIdMapUpdater(moduleId) {
+        if (_moduleMapUpdaterPath === location.pathname) return;
+        _moduleMapUpdaterPath = location.pathname;
+        const intervalId = setInterval(() => {
+            const h1El = Array.from(document.querySelectorAll('h1'))
+                .find(h => !h.closest('div.rounded-\\[6px\\].bg-white'));
+            if (!h1El) return;
+            const text = h1El.textContent.trim();
+            if (!text) return;
+            clearInterval(intervalId);
+            const key = sanitizeId(text);
+            const map = getModuleNameIdMap();
+            // each moduleId may only be associated with one title key
+            const existingKey = Object.keys(map).find(k => map[k] === moduleId);
+            if (existingKey === key) return; // already correctly mapped
+            if (existingKey) delete map[existingKey];
+            map[key] = moduleId;
+            setModuleNameIdMap(map);
+        }, 100);
+    }
+
+    // ── API helpers ────────────────────────────────────────────────────────────
+    let _lastSyncedPath = null;
+
+    function apiRequest(method, path, body) {
+        const apiKey = GM_getValue(GM_KEYNAME_APIKEY, "");
+        if (!apiKey) return Promise.reject(new Error("API key not set"));
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method,
+                url: API_HOST + path,
+                headers: {
+                    "Content-Type": "application/json",
+                    "x-api-key": apiKey,
+                },
+                data: body ? JSON.stringify(body) : undefined,
+                onload(res) {
+                    resolve({
+                        status: res.status,
+                        data: res.responseText ? JSON.parse(res.responseText) : null,
+                    });
+                },
+                onerror(err) { reject(err); },
+            });
+        });
+    }
+
+    function showSyncNotification(msg) {
+        console.error("[Poridhi Tracker]", msg);
+        let banner = document.getElementById('pt-sync-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'pt-sync-banner';
+            banner.className = 'pt-sync-banner';
+            document.body.appendChild(banner);
+        }
+        banner.textContent = msg;
+        clearTimeout(banner._hideTimer);
+        banner.classList.add('pt-visible');
+        banner._hideTimer = setTimeout(() => { banner.classList.remove('pt-visible'); }, 4000);
+    }
+
+    async function syncModulesFromApi(courseId) {
+        try {
+            const { status, data } = await apiRequest("GET", `/course/${courseId}/modules`);
+            if (status === 200 && data) {
+                const localData = getCourseData(courseId);
+                let changed = false;
+                for (const [mid, done] of Object.entries(data)) {
+                    if (localData[mid] !== done) {
+                        localData[mid] = done;
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    setCourseData(courseId, localData);
+                    rerenderModuleCards(courseId);
+                }
+            }
+        } catch (err) {
+            showSyncNotification("Failed to fetch module status from server");
+        }
+    }
+
+    async function syncLabsFromApi(courseId, moduleId) {
+        try {
+            const { status, data } = await apiRequest("GET", `/modules/${moduleId}/labs`);
+            if (status === 200 && data) {
+                const localData = getModuleData(moduleId);
+                let changed = false;
+                for (const [labId, done] of Object.entries(data)) {
+                    if (localData[labId] !== done) {
+                        localData[labId] = done;
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    setModuleData(moduleId, localData);
+                    const allDone = Object.keys(localData).length > 0
+                        && Object.values(localData).every(v => v === true);
+                    const courseData = getCourseData(courseId);
+                    courseData[moduleId] = allDone;
+                    setCourseData(courseId, courseData);
+                    rerenderLabCards(moduleId);
+                }
+            }
+        } catch (err) {
+            showSyncNotification("Failed to fetch lab status from server");
+        }
+    }
+
+    async function postLabUpdate(courseId, moduleId, labId, done) {
+        try {
+            const moduleData = getModuleData(moduleId);
+            moduleData[labId] = done;
+            const payload = Object.entries(moduleData).map(([id, d]) => ({ labId: id, done: d }));
+            await apiRequest("POST", `/course/${courseId}/modules/${moduleId}/labs`, payload);
+        } catch (err) {
+            showSyncNotification("Failed to sync lab status with server");
+        }
+    }
+
+    function rerenderModuleCards(courseId) {
+        const map = getModuleNameIdMap();
+        const cards = document.querySelectorAll('div.rounded-\\[6px\\].bg-white.font-ibm[data-pt]');
+        cards.forEach(card => {
+            const title = card.querySelector('h3')?.textContent.trim();
+            if (!title) return;
+            const moduleId = map[sanitizeId(title)];
+            if (!moduleId) return;
+            const done = isModuleDone(courseId, moduleId);
+            card.classList.toggle('pt-card-done', done);
+            if (done) ensureOverlay(card);
+            else removeOverlay(card);
+        });
+        updateModuleProgress(courseId);
+    }
+
+    function rerenderLabCards(moduleId) {
+        const cards = document.querySelectorAll('div.rounded-\\[6px\\].bg-white[data-pt]:not(.font-ibm)');
+        cards.forEach(card => {
+            const titleEl = card.querySelector('dt');
+            if (!titleEl) return;
+            const labId = sanitizeId(titleEl.textContent.trim());
+            if (!labId) return;
+            const done = isLabDone(moduleId, labId);
+            card.classList.toggle('pt-card-done', done);
+            if (done) ensureOverlay(card);
+            else removeOverlay(card);
+            const btn = card.querySelector('.pt-done-btn');
+            if (btn) {
+                btn.className = 'pt-done-btn' + (done ? ' pt-done' : '');
+                btn.title = done ? 'Mark as incomplete' : 'Mark as done';
+            }
+        });
     }
 
     // ── Toggle button factory ─────────────────────────────────────────────────
@@ -199,6 +393,7 @@ const API_HOST = "http://localhost:8787"
         const courseId = getCourseId();
         if (!courseId) return;
 
+        const map = getModuleNameIdMap();
         const cards = document.querySelectorAll(
             'div.rounded-\\[6px\\].bg-white.font-ibm:not([data-pt])'
         );
@@ -212,8 +407,8 @@ const API_HOST = "http://localhost:8787"
 
             card.dataset.pt = '1';
 
-            const moduleId = buildModuleId(courseId, title);
-            if (isModuleDone(courseId, moduleId)) {
+            const moduleId = map[sanitizeId(title)];
+            if (moduleId && isModuleDone(courseId, moduleId)) {
                 card.classList.add('pt-card-done');
                 ensureOverlay(card);
             }
@@ -222,6 +417,11 @@ const API_HOST = "http://localhost:8787"
         });
 
         if (injected > 0) updateModuleProgress(courseId);
+
+        if (injected > 0 && _lastSyncedPath !== location.pathname) {
+            _lastSyncedPath = location.pathname;
+            syncModulesFromApi(courseId);
+        }
     }
 
     function updateModuleProgress(courseId) {
@@ -230,11 +430,14 @@ const API_HOST = "http://localhost:8787"
         );
         if (!cards.length) return;
 
+        const map = getModuleNameIdMap();
         const courseData = getCourseData(courseId);
         let done = 0;
         cards.forEach(card => {
             const title = card.querySelector('h3')?.textContent.trim();
-            if (title && courseData[buildModuleId(courseId, title)]) done++;
+            if (!title) return;
+            const moduleId = map[sanitizeId(title)];
+            if (moduleId && courseData[moduleId]) done++;
         });
 
         let bar = document.getElementById('pt-progress-bar');
@@ -254,28 +457,14 @@ const API_HOST = "http://localhost:8787"
     // Button row: div.flex.gap-2.items-center.w-full.font-montserrat
     // ══════════════════════════════════════════════════════════════════════════
 
-    // Resolve module title from the page heading; fall back to the URL segment.
-    // Both the modules page (h3 card title) and labs page heading must produce
-    // the same text so that buildModuleId() returns a consistent key.
-    function getModuleTitleOnLabsPage() {
-        const headings = Array.from(document.querySelectorAll('h1, h2'));
-        for (const h of headings) {
-            if (h.closest('div.rounded-\\[6px\\].bg-white')) continue;
-            const text = h.textContent.trim();
-            if (text) return text;
-        }
-        // Fallback: URL segment (may differ from card title sanitization)
-        const match = window.location.pathname.match(/\/lab-group-modules\/[^/]+\/([^/]+)/);
-        return match ? decodeURIComponent(match[1]) : null;
-    }
-
     function injectLabTrackers() {
         const courseId = getCourseId();
         if (!courseId) return;
 
-        const moduleTitle = getModuleTitleOnLabsPage();
-        if (!moduleTitle) return;
-        const moduleId = buildModuleId(courseId, moduleTitle);
+        const moduleId = getModuleIdFromUrl();
+        if (!moduleId) return;
+
+        startModuleNameIdMapUpdater(moduleId);
 
         const cards = document.querySelectorAll(
             'div.rounded-\\[6px\\].bg-white:not([data-pt]):not(.font-ibm)'
@@ -315,10 +504,16 @@ const API_HOST = "http://localhost:8787"
                 card.classList.toggle('pt-card-done', nowDone);
                 if (nowDone) ensureOverlay(card);
                 else removeOverlay(card);
+                postLabUpdate(courseId, moduleId, labId, nowDone);
             });
 
             btnRow.appendChild(btn);
         });
+
+        if (cards.length > 0 && _lastSyncedPath !== location.pathname) {
+            _lastSyncedPath = location.pathname;
+            syncLabsFromApi(courseId, moduleId);
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════════
