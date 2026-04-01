@@ -14,7 +14,7 @@ export async function updateModuleLabs(env: Env, moduleId: string, labs: LabInfo
     const existingLabs = await getModuleLabs(env, moduleId) ?? {}
     const updated: ModulesLabs = { ...existingLabs }
     for (const { labId, done } of labs) {
-        if (typeof done !== "boolean") {
+        if (typeof labId !== "string" || !labId.trim() || typeof done !== "boolean") {
             throw new ValidationError("labId and done(boolean) are required for each lab in the payload");
         }
         if (existingLabs[labId] !== done) {

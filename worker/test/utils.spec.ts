@@ -14,6 +14,7 @@ describe("syncModuleCompletion", () => {
 		expect(raw).toBeTruthy();
 		const courseModules = JSON.parse(raw!);
 		expect(courseModules).toHaveProperty(moduleId);
+		expect(courseModules[moduleId]).toEqual({ done: true });
 	});
 
 	it("marks module as done when all labs are complete", async () => {
@@ -24,7 +25,7 @@ describe("syncModuleCompletion", () => {
 		await syncModuleCompletion(env, courseId, moduleId, labs);
 
 		const raw = await env.PORIDHI_LT.get(courseId);
-		expect(JSON.parse(raw!)[moduleId]).toBe(true);
+		expect(JSON.parse(raw!)[moduleId].done).toBe(true);
 	});
 
 	it("marks module as not done when any lab is incomplete", async () => {
@@ -35,7 +36,7 @@ describe("syncModuleCompletion", () => {
 		await syncModuleCompletion(env, courseId, moduleId, labs);
 
 		const raw = await env.PORIDHI_LT.get(courseId);
-		expect(JSON.parse(raw!)[moduleId]).toBe(false);
+		expect(JSON.parse(raw!)[moduleId].done).toBe(false);
 	});
 
 	it("marks module as not done when all labs are incomplete", async () => {
@@ -46,27 +47,27 @@ describe("syncModuleCompletion", () => {
 		await syncModuleCompletion(env, courseId, moduleId, labs);
 
 		const raw = await env.PORIDHI_LT.get(courseId);
-		expect(JSON.parse(raw!)[moduleId]).toBe(false);
+		expect(JSON.parse(raw!)[moduleId].done).toBe(false);
 	});
 
 	it("updates an existing course when module status changes", async () => {
 		const courseId = "sync-update-course";
 		const moduleId = "sync-mod-update";
 		// course already knows module as false
-		await env.PORIDHI_LT.put(courseId, JSON.stringify({ [moduleId]: false }));
+		await env.PORIDHI_LT.put(courseId, JSON.stringify({ [moduleId]: { done: false } }));
 
 		// now all labs are done
 		await syncModuleCompletion(env, courseId, moduleId, { "lab-1": true });
 
 		const raw = await env.PORIDHI_LT.get(courseId);
-		expect(JSON.parse(raw!)[moduleId]).toBe(true);
+		expect(JSON.parse(raw!)[moduleId].done).toBe(true);
 	});
 
 	it("skips KV write when module completion status has not changed", async () => {
 		const courseId = "sync-no-change";
 		const moduleId = "sync-mod-no-change";
 		// course already marks module as true
-		const initial = { [moduleId]: true };
+		const initial = { [moduleId]: { done: true } };
 		await env.PORIDHI_LT.put(courseId, JSON.stringify(initial));
 
 		// labs are still all done
@@ -74,7 +75,7 @@ describe("syncModuleCompletion", () => {
 
 		// value should still be true (no regression)
 		const raw = await env.PORIDHI_LT.get(courseId);
-		expect(JSON.parse(raw!)[moduleId]).toBe(true);
+		expect(JSON.parse(raw!)[moduleId].done).toBe(true);
 	});
 
 	it("preserves other modules in the course when updating", async () => {
@@ -82,15 +83,15 @@ describe("syncModuleCompletion", () => {
 		const moduleId = "sync-mod-a";
 		await env.PORIDHI_LT.put(
 			courseId,
-			JSON.stringify({ "sync-mod-a": false, "sync-mod-b": true })
+			JSON.stringify({ "sync-mod-a": { done: false }, "sync-mod-b": { done: true } })
 		);
 
 		await syncModuleCompletion(env, courseId, moduleId, { "lab-1": true });
 
 		const raw = await env.PORIDHI_LT.get(courseId);
 		const courseModules = JSON.parse(raw!);
-		expect(courseModules["sync-mod-a"]).toBe(true);
-		expect(courseModules["sync-mod-b"]).toBe(true);
+		expect(courseModules["sync-mod-a"].done).toBe(true);
+		expect(courseModules["sync-mod-b"].done).toBe(true);
 	});
 
 	it("handles a module with a single lab correctly", async () => {
@@ -100,6 +101,6 @@ describe("syncModuleCompletion", () => {
 		await syncModuleCompletion(env, courseId, moduleId, { "lab-only": true });
 
 		const raw = await env.PORIDHI_LT.get(courseId);
-		expect(JSON.parse(raw!)[moduleId]).toBe(true);
+		expect(JSON.parse(raw!)[moduleId].done).toBe(true);
 	});
 });

@@ -1,15 +1,29 @@
-import { env, createExecutionContext, waitOnExecutionContext, SELF } from "cloudflare:test";
+import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
 import worker from "../src/index";
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
+function authedRequest(url: string, init?: RequestInit<IncomingRequestCfProperties>) {
+	const headers = new Headers(init?.headers);
+	headers.set("x-api-key", env.API_KEY);
+	return new IncomingRequest(url, { ...init, headers });
+}
+
 // ---------------------------------------------------------------------------
 // GET /course/:courseId/modules
 // ---------------------------------------------------------------------------
 describe("GET /course/:courseId/modules", () => {
-	it("returns 404 when course does not exist", async () => {
+	it("returns 401 when x-api-key is missing", async () => {
 		const req = new IncomingRequest("http://example.com/course/no-such-course/modules");
+		const ctx = createExecutionContext();
+		const res = await worker.fetch(req, env, ctx);
+		await waitOnExecutionContext(ctx);
+		expect(res.status).toBe(401);
+	});
+
+	it("returns 404 when course does not exist", async () => {
+		const req = authedRequest("http://example.com/course/no-such-course/modules");
 		const ctx = createExecutionContext();
 		const res = await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -18,20 +32,21 @@ describe("GET /course/:courseId/modules", () => {
 
 	it("returns 200 with stored course modules", async () => {
 		const courseId = "test-course-get";
-		const modules = { "mod-a": true, "mod-b": false };
+		const modules = { "mod-a": { done: true }, "mod-b": { done: false, titleKey: "module-b" } };
+		const expectedStatus = { "mod-a": true, "module-b": false };
 		await env.PORIDHI_LT.put(courseId, JSON.stringify(modules));
 
-		const req = new IncomingRequest(`http://example.com/course/${courseId}/modules`);
+		const req = authedRequest(`http://example.com/course/${courseId}/modules`);
 		const ctx = createExecutionContext();
 		const res = await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
 
 		expect(res.status).toBe(200);
-		expect(await res.json()).toEqual(modules);
+		expect(await res.json()).toEqual(expectedStatus);
 	});
 
 	it("returns 404 JSON body with error message", async () => {
-		const req = new IncomingRequest("http://example.com/course/ghost/modules");
+		const req = authedRequest("http://example.com/course/ghost/modules");
 		const ctx = createExecutionContext();
 		const res = await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -46,7 +61,7 @@ describe("GET /course/:courseId/modules", () => {
 // ---------------------------------------------------------------------------
 describe("GET /modules/:moduleId/labs", () => {
 	it("returns 404 when module does not exist", async () => {
-		const req = new IncomingRequest("http://example.com/modules/no-such-module/labs");
+		const req = authedRequest("http://example.com/modules/no-such-module/labs");
 		const ctx = createExecutionContext();
 		const res = await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -58,7 +73,7 @@ describe("GET /modules/:moduleId/labs", () => {
 		const labs = { "lab-1": true, "lab-2": false };
 		await env.PORIDHI_LT.put(moduleId, JSON.stringify(labs));
 
-		const req = new IncomingRequest(`http://example.com/modules/${moduleId}/labs`);
+		const req = authedRequest(`http://example.com/modules/${moduleId}/labs`);
 		const ctx = createExecutionContext();
 		const res = await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -68,7 +83,7 @@ describe("GET /modules/:moduleId/labs", () => {
 	});
 
 	it("returns 404 JSON body with error message", async () => {
-		const req = new IncomingRequest("http://example.com/modules/ghost-mod/labs");
+		const req = authedRequest("http://example.com/modules/ghost-mod/labs");
 		const ctx = createExecutionContext();
 		const res = await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -83,7 +98,7 @@ describe("GET /modules/:moduleId/labs", () => {
 // ---------------------------------------------------------------------------
 describe("POST /course/:courseId/modules/:moduleId/labs", () => {
 	function postLabs(courseId: string, moduleId: string, body: unknown) {
-		return new IncomingRequest(`http://example.com/course/${courseId}/modules/${moduleId}/labs`, {
+		return authedRequest(`http://example.com/course/${courseId}/modules/${moduleId}/labs`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(body),
@@ -114,14 +129,14 @@ describe("POST /course/:courseId/modules/:moduleId/labs", () => {
 		expect(res.status).toBe(400);
 	});
 
-	it("returns 200 with { success: true } on valid update", async () => {
+	it("returns 200 with updated labs map on valid update", async () => {
 		const req = postLabs("course-valid", "mod-valid", [{ labId: "lab-1", done: true }]);
 		const ctx = createExecutionContext();
 		const res = await worker.fetch(req, env, ctx);
 		await waitOnExecutionContext(ctx);
 
 		expect(res.status).toBe(200);
-		expect(await res.json()).toEqual({ success: true });
+		expect(await res.json()).toEqual({ "lab-1": true });
 	});
 
 	it("persists lab completion status in KV", async () => {
@@ -150,7 +165,7 @@ describe("POST /course/:courseId/modules/:moduleId/labs", () => {
 
 		const courseRaw = await env.PORIDHI_LT.get(courseId);
 		const courseModules = JSON.parse(courseRaw!);
-		expect(courseModules[moduleId]).toBe(true);
+		expect(courseModules[moduleId].done).toBe(true);
 	});
 
 	it("marks module incomplete on course when not all labs are done", async () => {
@@ -166,7 +181,7 @@ describe("POST /course/:courseId/modules/:moduleId/labs", () => {
 
 		const courseRaw = await env.PORIDHI_LT.get(courseId);
 		const courseModules = JSON.parse(courseRaw!);
-		expect(courseModules[moduleId]).toBe(false);
+		expect(courseModules[moduleId].done).toBe(false);
 	});
 
 	it("registers course in KV when it does not yet exist", async () => {
@@ -182,6 +197,7 @@ describe("POST /course/:courseId/modules/:moduleId/labs", () => {
 		expect(courseRaw).toBeTruthy();
 		const courseModules = JSON.parse(courseRaw!);
 		expect(courseModules).toHaveProperty(moduleId);
+		expect(courseModules[moduleId].done).toBe(true);
 	});
 
 	it("updates an existing lab to done=false", async () => {
@@ -197,5 +213,45 @@ describe("POST /course/:courseId/modules/:moduleId/labs", () => {
 		const raw = await env.PORIDHI_LT.get(moduleId);
 		const labs = JSON.parse(raw!);
 		expect(labs["lab-1"]).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// POST /course/:courseId/modules/:moduleId/title
+// ---------------------------------------------------------------------------
+describe("POST /course/:courseId/modules/:moduleId/title", () => {
+	function postTitle(courseId: string, moduleId: string, body: unknown) {
+		return authedRequest(`http://example.com/course/${courseId}/modules/${moduleId}/title`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	}
+
+	it("returns 400 when titleKey is missing", async () => {
+		const req = postTitle("course-title-1", "mod-title-1", {});
+		const ctx = createExecutionContext();
+		const res = await worker.fetch(req, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(res.status).toBe(400);
+	});
+
+	it("returns updated module info and persists titleKey", async () => {
+		const courseId = "course-title-2";
+		const moduleId = "mod-title-2";
+
+		const req = postTitle(courseId, moduleId, { titleKey: "my-module-title" });
+		const ctx = createExecutionContext();
+		const res = await worker.fetch(req, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ titleKey: "my-module-title", done: false });
+
+		const raw = await env.PORIDHI_LT.get(courseId);
+		expect(raw).toBeTruthy();
+		const modules = JSON.parse(raw!);
+		expect(modules[moduleId].titleKey).toBe("my-module-title");
 	});
 });

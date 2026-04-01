@@ -1,14 +1,25 @@
-import { getCourseModules, setCourseModules } from "./services/course";
+import { getCourseModules, setCourseModules, updateCourseModule } from "./services/course";
 
 export async function syncModuleCompletion(env: Env, courseId: string, moduleId: string, updatedLabs: ModulesLabs): Promise<void> {
     const allLabsDone = Object.values(updatedLabs).every(done => done);
     const courseModules = await getCourseModules(env, courseId);
     if (!courseModules) {
         // register course if not exists
-        await setCourseModules(env, courseId, { [moduleId]: allLabsDone });
+        await setCourseModules(env, courseId, { [moduleId]: { done: allLabsDone } });
         return;
     }
-    if (courseModules[moduleId] === allLabsDone) return; // no update needed
-    courseModules[moduleId] = allLabsDone;
-    await setCourseModules(env, courseId, courseModules);
+    if (courseModules[moduleId]?.done === allLabsDone) return; // no update needed
+    await updateCourseModule(env, courseId, moduleId, { done: allLabsDone });
+}
+
+export function mapCourseModuleStatus(modules: CourseModules): ModulesStatus {
+    const status: ModulesStatus = {};
+    for (const [moduleKey, moduleInfo] of Object.entries(modules)) {
+        if (moduleInfo?.titleKey) {
+            status[moduleInfo.titleKey] = moduleInfo.done;
+        } else {
+            status[moduleKey] = moduleInfo.done;
+        }
+    }
+    return status;
 }

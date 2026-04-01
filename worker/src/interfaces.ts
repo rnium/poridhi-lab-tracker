@@ -3,10 +3,18 @@ interface Env {
   API_KEY: string;
 }
 
-interface CourseModules extends Record<string, boolean> {
+interface CourseModuleInfo {
+    titleKey?: string;
+    done: boolean;
+}
+
+interface CourseModules extends Record<string, CourseModuleInfo> {
 }
 
 interface ModulesLabs extends Record<string, boolean> {
+}
+
+interface ModulesStatus extends Record<string, boolean> {
 }
 
 interface LabInfo {

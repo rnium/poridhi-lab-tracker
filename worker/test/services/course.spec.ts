@@ -14,7 +14,7 @@ describe("getCourseModules", () => {
 
 	it("returns the parsed modules object when key exists", async () => {
 		const courseId = "gc-course-1";
-		const modules = { "mod-1": true, "mod-2": false };
+		const modules = { "mod-1": { done: true }, "mod-2": { done: false } };
 		await env.PORIDHI_LT.put(courseId, JSON.stringify(modules));
 
 		const result = await getCourseModules(env, courseId);
@@ -33,7 +33,7 @@ describe("getCourseModules", () => {
 describe("setCourseModules", () => {
 	it("persists the modules object in KV", async () => {
 		const courseId = "sc-course-1";
-		const modules = { "mod-a": true };
+		const modules = { "mod-a": { done: true } };
 		await setCourseModules(env, courseId, modules);
 
 		const raw = await env.PORIDHI_LT.get(courseId);
@@ -42,9 +42,9 @@ describe("setCourseModules", () => {
 
 	it("overwrites an existing KV entry", async () => {
 		const courseId = "sc-course-overwrite";
-		await env.PORIDHI_LT.put(courseId, JSON.stringify({ "mod-old": true }));
+		await env.PORIDHI_LT.put(courseId, JSON.stringify({ "mod-old": { done: true } }));
 
-		const newModules = { "mod-new": false };
+		const newModules = { "mod-new": { done: false } };
 		await setCourseModules(env, courseId, newModules);
 
 		const raw = await env.PORIDHI_LT.get(courseId);
@@ -55,41 +55,47 @@ describe("setCourseModules", () => {
 describe("updateCourseModule", () => {
 	it("creates a new entry when course does not exist", async () => {
 		const courseId = "uc-course-new";
-		const result = await updateCourseModule(env, courseId, "mod-1", true);
+		const result = await updateCourseModule(env, courseId, "mod-1", { done: true });
 
-		expect(result).toEqual({ "mod-1": true });
+		expect(result).toEqual({ done: true });
 
 		const raw = await env.PORIDHI_LT.get(courseId);
-		expect(JSON.parse(raw!)).toEqual({ "mod-1": true });
+		expect(JSON.parse(raw!)).toEqual({ "mod-1": { done: true } });
 	});
 
 	it("adds a new module key to an existing course", async () => {
 		const courseId = "uc-course-add";
-		await env.PORIDHI_LT.put(courseId, JSON.stringify({ "mod-1": true }));
+		await env.PORIDHI_LT.put(courseId, JSON.stringify({ "mod-1": { done: true, titleKey: "intro" } }));
 
-		const result = await updateCourseModule(env, courseId, "mod-2", false);
+		const result = await updateCourseModule(env, courseId, "mod-2", { done: false, titleKey: "advanced" });
 
-		expect(result).toEqual({ "mod-1": true, "mod-2": false });
+		expect(result).toEqual({ done: false, titleKey: "advanced" });
+
+		const raw = await env.PORIDHI_LT.get(courseId);
+		expect(JSON.parse(raw!)).toEqual({
+			"mod-1": { done: true, titleKey: "intro" },
+			"mod-2": { done: false, titleKey: "advanced" },
+		});
 	});
 
 	it("updates an existing module key from false to true", async () => {
 		const courseId = "uc-course-update";
-		await env.PORIDHI_LT.put(courseId, JSON.stringify({ "mod-1": false }));
+		await env.PORIDHI_LT.put(courseId, JSON.stringify({ "mod-1": { done: false, titleKey: "t1" } }));
 
-		const result = await updateCourseModule(env, courseId, "mod-1", true);
+		const result = await updateCourseModule(env, courseId, "mod-1", { done: true });
 
-		expect(result["mod-1"]).toBe(true);
+		expect(result).toEqual({ done: true, titleKey: "t1" });
 	});
 
-	it("returns the full updated modules map", async () => {
+	it("returns only the updated module info", async () => {
 		const courseId = "uc-course-full";
 		await env.PORIDHI_LT.put(
 			courseId,
-			JSON.stringify({ "mod-a": true, "mod-b": false })
+			JSON.stringify({ "mod-a": { done: true }, "mod-b": { done: false, titleKey: "before" } })
 		);
 
-		const result = await updateCourseModule(env, courseId, "mod-b", true);
+		const result = await updateCourseModule(env, courseId, "mod-b", { done: true, titleKey: "after" });
 
-		expect(result).toEqual({ "mod-a": true, "mod-b": true });
+		expect(result).toEqual({ done: true, titleKey: "after" });
 	});
 });

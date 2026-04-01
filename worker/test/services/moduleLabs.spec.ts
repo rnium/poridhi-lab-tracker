@@ -27,6 +27,13 @@ describe("getModuleLabs", () => {
 });
 
 describe("updateModuleLabs", () => {
+	it("throws when labId is missing or empty", async () => {
+		const moduleId = "uml-mod-invalid-labid";
+		await expect(updateModuleLabs(env, moduleId, [{ labId: "", done: true }]))
+			.rejects
+			.toThrow("labId and done(boolean) are required for each lab in the payload");
+	});
+
 	it("creates a new entry when module does not exist", async () => {
 		const moduleId = "uml-mod-new";
 		const result = await updateModuleLabs(env, moduleId, [{ labId: "lab-1", done: true }]);
