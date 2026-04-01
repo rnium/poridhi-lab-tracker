@@ -2,6 +2,7 @@ import { IRequest, json, error } from "itty-router";
 import { getModuleLabs, updateModuleLabs } from "./services/moduleLabs";
 import { syncModuleCompletion } from "./utils";
 import { getCourseModules } from "./services/course";
+import { ValidationError } from "./errors";
 
 
 
@@ -37,7 +38,8 @@ export async function handleUpdateModuleLabs(req: IRequest, env: Env): Promise<R
         await syncModuleCompletion(env, courseId, moduleId, updated);
         return json(updated);
     } catch (err) {
-        if (err instanceof Error && err.message.includes("labId and done")) {
+        if (err instanceof ValidationError) {
+            console.warn("Error:", err.name)
             return error(400, err.message);
         }
         return error(500, "Internal Server Error");

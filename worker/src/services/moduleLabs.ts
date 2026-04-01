@@ -1,3 +1,5 @@
+import { ValidationError } from "../errors"
+
 export async function getModuleLabs(env: Env, moduleId: string): Promise<ModulesLabs | null> {
     const moduleData = await env.PORIDHI_LT.get(moduleId)
     if (!moduleData) return null
@@ -12,8 +14,8 @@ export async function updateModuleLabs(env: Env, moduleId: string, labs: LabInfo
     const existingLabs = await getModuleLabs(env, moduleId) ?? {}
     const updated: ModulesLabs = { ...existingLabs }
     for (const { labId, done } of labs) {
-        if (typeof done !== "boolean" || !labId) {
-            throw new Error("labId and done(boolean) are required for each lab in the payload");
+        if (typeof done !== "boolean") {
+            throw new ValidationError("labId and done(boolean) are required for each lab in the payload");
         }
         if (existingLabs[labId] !== done) {
             updated[labId] = done
