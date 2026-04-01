@@ -193,31 +193,6 @@ const API_HOST = "http://localhost:8787";
         return next;
     }
 
-    // ── moduleNameIdMap updater ───────────────────────────────────────────────
-    // Polls every 100 ms for a non-empty h1 outside of a card, then stores
-    // sanitized(h1Text) → moduleId in moduleNameIdMap.  One poller per URL.
-    let _moduleMapUpdaterPath = null;
-    function startModuleNameIdMapUpdater(moduleId) {
-        if (_moduleMapUpdaterPath === location.pathname) return;
-        _moduleMapUpdaterPath = location.pathname;
-        const intervalId = setInterval(() => {
-            const h1El = Array.from(document.querySelectorAll('h1'))
-                .find(h => !h.closest('div.rounded-\\[6px\\].bg-white'));
-            if (!h1El) return;
-            const text = h1El.textContent.trim();
-            if (!text) return;
-            clearInterval(intervalId);
-            const key = sanitizeId(text);
-            const map = getModuleNameIdMap();
-            // each moduleId may only be associated with one title key
-            const existingKey = Object.keys(map).find(k => map[k] === moduleId);
-            if (existingKey === key) return; // already correctly mapped
-            if (existingKey) delete map[existingKey];
-            map[key] = moduleId;
-            setModuleNameIdMap(map);
-        }, 100);
-    }
-
     // ── API helpers ────────────────────────────────────────────────────────────
     let _lastSyncedPath = null;
 
@@ -263,11 +238,15 @@ const API_HOST = "http://localhost:8787";
         try {
             const { status, data } = await apiRequest("GET", `/course/${courseId}/modules`);
             if (status === 200 && data) {
+                const moduleNameIdMap = getModuleNameIdMap();
                 const localData = getCourseData(courseId);
                 let changed = false;
-                for (const [mid, done] of Object.entries(data)) {
-                    if (localData[mid] !== done) {
-                        localData[mid] = done;
+                for (const [serverKey, done] of Object.entries(data)) {
+                    // Server may return status keyed by titleKey or raw module key. We ignore module keys that don't have a mapping in moduleNameIdMap, since they likely won't match any local module cards.
+                    const moduleId = moduleNameIdMap[serverKey];
+                    if (!moduleId) continue;
+                    if (localData[moduleId] !== done) {
+                        localData[moduleId] = done;
                         changed = true;
                     }
                 }
@@ -317,6 +296,49 @@ const API_HOST = "http://localhost:8787";
         } catch (err) {
             showSyncNotification("Failed to sync lab status with server");
         }
+    }
+
+    async function postModuleTitleKeyUpdate(courseId, moduleId, titleKey) {
+        try {
+            const payload = { titleKey };
+            await apiRequest("POST", `/course/${courseId}/modules/${moduleId}/title`, payload);
+        } catch (err) {
+            showSyncNotification("Failed to sync module title with server");
+        }
+    }
+
+    // ── moduleNameIdMap updater ───────────────────────────────────────────────
+    // Polls every 100 ms for a non-empty h1 outside of a card, then stores
+    // sanitized(h1Text) → moduleId in moduleNameIdMap and syncs titleKey to API.
+    // One poller per URL.
+    let _moduleMapUpdaterPath = null;
+    function startModuleNameIdMapUpdater(courseId, moduleId) {
+        if (_moduleMapUpdaterPath === location.pathname) return;
+        _moduleMapUpdaterPath = location.pathname;
+        const startedAt = Date.now();
+        const intervalId = setInterval(() => {
+            // Stop polling after 25s on pages where header may not load as expected.
+            if (Date.now() - startedAt > 25000) {
+                clearInterval(intervalId);
+                return;
+            }
+            console.log("[Poridhi Tracker] Polling for module title...");
+            const h1El = Array.from(document.querySelectorAll('h1'))
+                .find(h => !h.closest('div.rounded-\\[6px\\].bg-white'));
+            if (!h1El) return;
+            const text = h1El.textContent.trim();
+            if (!text) return;
+            clearInterval(intervalId);   
+            const key = sanitizeId(text);
+            const map = getModuleNameIdMap();
+            postModuleTitleKeyUpdate(courseId, moduleId, key);
+            // each moduleId may only be associated with one title key
+            const existingKey = Object.keys(map).find(k => map[k] === moduleId);
+            if (existingKey === key) return; // already correctly mapped
+            if (existingKey) delete map[existingKey];
+            map[key] = moduleId;
+            setModuleNameIdMap(map);   
+        }, 100);
     }
 
     function rerenderModuleCards(courseId) {
@@ -464,7 +486,7 @@ const API_HOST = "http://localhost:8787";
         const moduleId = getModuleIdFromUrl();
         if (!moduleId) return;
 
-        startModuleNameIdMapUpdater(moduleId);
+        startModuleNameIdMapUpdater(courseId, moduleId);
 
         const cards = document.querySelectorAll(
             'div.rounded-\\[6px\\].bg-white:not([data-pt]):not(.font-ibm)'
