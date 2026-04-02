@@ -17,6 +17,7 @@ const API_HOST = "http://localhost:8787";
     'use strict';    
 
     const GM_KEYNAME_APIKEY = "api-key"
+    const WHITELISTED_STATUS_CODES = [200, 404]; // 404 is expected for unregistered modules/labs
 
     // ---- MENU: SET SECRET ----
     GM_registerMenuCommand("Set API Key", () => {
@@ -105,14 +106,15 @@ const API_HOST = "http://localhost:8787";
             position: fixed;
             bottom: 20px;
             right: 20px;
-            background: rgba(40, 40, 50, 0.88);
-            color: #e0e0e0;
+            background: rgba(255, 255, 255, 0.8);
+            color: #3a3d69;
             font-size: 12px;
             font-family: Montserrat, sans-serif;
             font-weight: 400;
             padding: 8px 14px;
             border-radius: 8px;
             border-left: 3px solid #e06c6c;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
             z-index: 99999;
             max-width: 300px;
             backdrop-filter: blur(4px);
@@ -161,13 +163,58 @@ const API_HOST = "http://localhost:8787";
         GM_setValue(courseId, data);
     }
 
-    // moduleNameIdMap — key: sanitized(h1Title) → value: moduleId (raw URL segment)
     const GM_KEYNAME_MODULE_MAP = "moduleNameIdMap";
-    function getModuleNameIdMap() {
-        return GM_getValue(GM_KEYNAME_MODULE_MAP, {});
+    function getModuleNameIdMap(courseId) {
+        const mnm = GM_getValue(GM_KEYNAME_MODULE_MAP, {});
+        return mnm[courseId] ?? {} 
     }
-    function setModuleNameIdMap(map) {
-        GM_setValue(GM_KEYNAME_MODULE_MAP, map);
+    function setModuleNameIdMap(courseId, map) {
+        const existing = GM_getValue(GM_KEYNAME_MODULE_MAP, {});
+        const next = {
+            ...existing,
+            [courseId]: map
+        };
+        GM_setValue(GM_KEYNAME_MODULE_MAP, next);
+    }
+
+    function parseJsonSafe(text) {
+        if (!text) return null;
+        try {
+            return JSON.parse(text);
+        } catch {
+            return null;
+        }
+    }
+
+    function getErrorMessage(err) {
+        if (!err) return "Unknown error";
+        if (typeof err === "string") return err;
+        if (typeof err.message === "string" && err.message.trim()) return err.message;
+        return "Unknown error";
+    }
+
+    function upsertModuleTitleKeyMapping(map, moduleId, titleKey) {
+        if (!titleKey) return false;
+        const existingKey = Object.keys(map).find(k => map[k] === moduleId);
+        if (existingKey === titleKey && map[titleKey] === moduleId) return false;
+        if (existingKey && existingKey !== titleKey) {
+            delete map[existingKey];
+        }
+        if (map[titleKey] !== moduleId) {
+            map[titleKey] = moduleId;
+            return true;
+        }
+        return false;
+    }
+
+    function normalizeServerModuleInfo(info) {
+        if (!info || typeof info !== "object") {
+            return { done: false, titleKey: undefined };
+        }
+        return {
+            done: info.done === true,
+            titleKey: typeof info.titleKey === "string" && info.titleKey.trim() ? info.titleKey : undefined,
+        };
     }
 
     function isLabDone(moduleId, labId) {
@@ -211,7 +258,7 @@ const API_HOST = "http://localhost:8787";
                 onload(res) {
                     resolve({
                         status: res.status,
-                        data: res.responseText ? JSON.parse(res.responseText) : null,
+                        data: parseJsonSafe(res.responseText),
                     });
                 },
                 onerror(err) { reject(err); },
@@ -237,36 +284,62 @@ const API_HOST = "http://localhost:8787";
     async function syncModulesFromApi(courseId) {
         try {
             const { status, data } = await apiRequest("GET", `/course/${courseId}/modules`);
-            if (status === 200 && data) {
-                const moduleNameIdMap = getModuleNameIdMap();
+            if (!WHITELISTED_STATUS_CODES.includes(status)) {
+                showSyncNotification(`Failed to sync module status: HTTP ${status}`);
+                return;
+            }
+            if (data) {
+                const moduleNameIdMap = { ...getModuleNameIdMap(courseId) };
                 const localData = getCourseData(courseId);
-                let changed = false;
-                for (const [serverKey, done] of Object.entries(data)) {
-                    // Server may return status keyed by titleKey or raw module key. We ignore module keys that don't have a mapping in moduleNameIdMap, since they likely won't match any local module cards.
-                    const moduleId = moduleNameIdMap[serverKey];
-                    if (!moduleId) continue;
+                const serverModules = (typeof data === "object" && data !== null) ? data : {};
+
+                const unsyncedModules = Object.keys(localData).filter(local => serverModules[local] === undefined);
+                unsyncedModules.forEach(moduleId => {
+                    delete localData[moduleId];
+                });
+
+                let changed = unsyncedModules.length > 0;
+                for (const [moduleId, info] of Object.entries(serverModules)) {
+                    const { titleKey, done } = normalizeServerModuleInfo(info);
                     if (localData[moduleId] !== done) {
                         localData[moduleId] = done;
                         changed = true;
                     }
+                    if (upsertModuleTitleKeyMapping(moduleNameIdMap, moduleId, titleKey)) {
+                        changed = true;
+                    }
                 }
+
                 if (changed) {
                     setCourseData(courseId, localData);
+                    setModuleNameIdMap(courseId, moduleNameIdMap);
                     rerenderModuleCards(courseId);
                 }
             }
         } catch (err) {
-            showSyncNotification("Failed to fetch module status from server");
+            const message = getErrorMessage(err);
+            showSyncNotification(`Failed to sync module status: ${message}`);
         }
     }
 
     async function syncLabsFromApi(courseId, moduleId) {
         try {
             const { status, data } = await apiRequest("GET", `/modules/${moduleId}/labs`);
-            if (status === 200 && data) {
+            if (!WHITELISTED_STATUS_CODES.includes(status)) {
+                showSyncNotification(`Failed to sync lab status: HTTP ${status}`);
+                return;
+            }
+            if (data) {
                 const localData = getModuleData(moduleId);
-                let changed = false;
-                for (const [labId, done] of Object.entries(data)) {
+                const serverLabs = (typeof data === "object" && data !== null) ? data : {};
+
+                const unsyncedLabs = Object.keys(localData).filter(local => serverLabs[local] === undefined);
+                unsyncedLabs.forEach(labId => {
+                    delete localData[labId];
+                });
+
+                let changed = unsyncedLabs.length > 0;
+                for (const [labId, done] of Object.entries(serverLabs)) {
                     if (localData[labId] !== done) {
                         localData[labId] = done;
                         changed = true;
@@ -283,7 +356,8 @@ const API_HOST = "http://localhost:8787";
                 }
             }
         } catch (err) {
-            showSyncNotification("Failed to fetch lab status from server");
+            const message = getErrorMessage(err);
+            showSyncNotification(`Failed to sync lab status: ${message}`);
         }
     }
 
@@ -330,19 +404,19 @@ const API_HOST = "http://localhost:8787";
             if (!text) return;
             clearInterval(intervalId);   
             const key = sanitizeId(text);
-            const map = getModuleNameIdMap();
+            const map = { ...getModuleNameIdMap(courseId) };
             postModuleTitleKeyUpdate(courseId, moduleId, key);
             // each moduleId may only be associated with one title key
             const existingKey = Object.keys(map).find(k => map[k] === moduleId);
             if (existingKey === key) return; // already correctly mapped
             if (existingKey) delete map[existingKey];
             map[key] = moduleId;
-            setModuleNameIdMap(map);   
+            setModuleNameIdMap(courseId, map);   
         }, 100);
     }
 
     function rerenderModuleCards(courseId) {
-        const map = getModuleNameIdMap();
+        const map = getModuleNameIdMap(courseId);
         const cards = document.querySelectorAll('div.rounded-\\[6px\\].bg-white.font-ibm[data-pt]');
         cards.forEach(card => {
             const title = card.querySelector('h3')?.textContent.trim();
@@ -415,7 +489,7 @@ const API_HOST = "http://localhost:8787";
         const courseId = getCourseId();
         if (!courseId) return;
 
-        const map = getModuleNameIdMap();
+        const map = getModuleNameIdMap(courseId);
         const cards = document.querySelectorAll(
             'div.rounded-\\[6px\\].bg-white.font-ibm:not([data-pt])'
         );
@@ -452,7 +526,7 @@ const API_HOST = "http://localhost:8787";
         );
         if (!cards.length) return;
 
-        const map = getModuleNameIdMap();
+        const map = getModuleNameIdMap(courseId);
         const courseData = getCourseData(courseId);
         let done = 0;
         cards.forEach(card => {
