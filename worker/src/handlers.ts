@@ -1,6 +1,6 @@
 import { IRequest, json, error } from "itty-router";
 import { getModuleLabs, updateModuleLabs } from "./services/moduleLabs";
-import { syncModuleCompletion, mapCourseModuleStatus } from "./utils";
+import { syncModuleCompletion } from "./utils";
 import { getCourseModules, updateCourseModule } from "./services/course";
 import { ValidationError } from "./errors";
 
@@ -11,8 +11,7 @@ export async function handleGetCourseModules(req: IRequest, env: Env): Promise<R
     if (!courseId) return error(400, "Course ID is required")
     try {
         const modules = await getCourseModules(env, courseId);
-        const statusMap = mapCourseModuleStatus(modules ?? {});
-        return modules ? json(statusMap) : error(404, "Course not found");
+        return modules ? json(modules) : error(404, "Course not found");
     } catch {
         return error(500, "Internal Server Error");
     }

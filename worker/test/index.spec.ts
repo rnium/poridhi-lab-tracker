@@ -33,7 +33,6 @@ describe("GET /course/:courseId/modules", () => {
 	it("returns 200 with stored course modules", async () => {
 		const courseId = "test-course-get";
 		const modules = { "mod-a": { done: true }, "mod-b": { done: false, titleKey: "module-b" } };
-		const expectedStatus = { "mod-a": true, "module-b": false };
 		await env.PORIDHI_LT.put(courseId, JSON.stringify(modules));
 
 		const req = authedRequest(`http://example.com/course/${courseId}/modules`);
@@ -42,7 +41,7 @@ describe("GET /course/:courseId/modules", () => {
 		await waitOnExecutionContext(ctx);
 
 		expect(res.status).toBe(200);
-		expect(await res.json()).toEqual(expectedStatus);
+		expect(await res.json()).toEqual(modules);
 	});
 
 	it("returns 404 JSON body with error message", async () => {

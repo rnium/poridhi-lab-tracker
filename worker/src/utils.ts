@@ -11,15 +11,3 @@ export async function syncModuleCompletion(env: Env, courseId: string, moduleId:
     if (courseModules[moduleId]?.done === allLabsDone) return; // no update needed
     await updateCourseModule(env, courseId, moduleId, { done: allLabsDone });
 }
-
-export function mapCourseModuleStatus(modules: CourseModules): ModulesStatus {
-    const status: ModulesStatus = {};
-    for (const [moduleKey, moduleInfo] of Object.entries(modules)) {
-        if (moduleInfo?.titleKey) {
-            status[moduleInfo.titleKey] = moduleInfo.done;
-        } else {
-            status[moduleKey] = moduleInfo.done;
-        }
-    }
-    return status;
-}
