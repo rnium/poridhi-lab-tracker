@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Poridhi Lab Tracker
 // @namespace    http://tampermonkey.net/
-// @version      0.1.3-dev
+// @version      0.1.3
 // @description  Mark labs and modules as done/incomplete on poridhi.io
 // @author       Md. Saiful Islam Roni
 // @match        https://poridhi.io/*
