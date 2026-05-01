@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Poridhi Lab Tracker
 // @namespace    http://tampermonkey.net/
-// @version      0.1.3
+// @version      0.1.4
 // @description  Mark labs and modules as done/incomplete on poridhi.io
 // @author       Md. Saiful Islam Roni
 // @match        https://poridhi.io/*
@@ -197,8 +197,9 @@ const API_HOST = "http://localhost:8787";
   function getErrorMessage(err) {
     if (!err) return "Unknown error";
     if (typeof err === "string") return err;
-    if (typeof err.message === "string" && err.message.trim())
+    if (typeof err.message === "string" && err.message.trim()) {
       return err.message;
+    }
     return "Unknown error";
   }
 
@@ -531,6 +532,21 @@ const API_HOST = "http://localhost:8787";
     card.querySelector(".pt-done-overlay")?.remove();
   }
 
+  // Attaches a debounced "input" listener to the search box so that any
+  // keystroke that changes the visible card count triggers a re-render.
+  // Safe to call repeatedly — the listener is only attached once per element
+  // (guarded by data-pt-search on the input node).
+  function watchSearchInput(onSearch) {
+    const input = document.querySelector('input[placeholder="Search"]');
+    if (!input || input.dataset.ptSearch) return;
+    input.dataset.ptSearch = "1";
+    let searchDebounce;
+    input.addEventListener("input", () => {
+      clearTimeout(searchDebounce);
+      searchDebounce = setTimeout(onSearch, 300);
+    });
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // MODULES PAGE  — URL: /lab-group-modules/{courseId}
   // Done state is derived entirely from lab completion — no manual button.
@@ -563,19 +579,36 @@ const API_HOST = "http://localhost:8787";
       injected++;
     });
 
-    if (injected > 0) updateModuleProgress(courseId);
+    // Always refresh the progress bar — even when injected === 0 the visible
+    // card count may have changed because the search filter hid some cards.
+    updateModuleProgress(courseId);
 
     if (injected > 0 && _lastSyncedPath !== location.pathname) {
       _lastSyncedPath = location.pathname;
       syncModulesFromApi(courseId);
     }
+
+    // Re-run whenever the search input changes so the progress bar and
+    // overlays reflect the filtered card count immediately.
+    // injectModuleTrackers() picks up any brand-new (React-fresh) cards that
+    // lost their [data-pt] tag, while rerenderModuleCards() re-stamps the
+    // pt-card-done class and overlay on every card that was already tagged
+    // but whose DOM node was recycled and stripped by React during filtering.
+    watchSearchInput(() => {
+      injectModuleTrackers();
+      rerenderModuleCards(courseId);
+    });
   }
 
   function updateModuleProgress(courseId) {
-    const cards = document.querySelectorAll(
+    const allCards = document.querySelectorAll(
       "div.rounded-\\[6px\\].bg-white.font-ibm[data-pt]",
     );
-    if (!cards.length) return;
+    if (!allCards.length) return;
+
+    // Only count cards that are currently visible — offsetParent is null for
+    // elements hidden via display:none (React's CSS-based search filtering).
+    const cards = Array.from(allCards).filter((c) => c.offsetParent !== null);
 
     const map = getModuleNameIdMap(courseId);
     const courseData = getCourseData(courseId);
@@ -592,7 +625,7 @@ const API_HOST = "http://localhost:8787";
       bar = document.createElement("div");
       bar.id = "pt-progress-bar";
       bar.className = "pt-progress";
-      const grid = cards[0]?.closest('[class*="grid"]');
+      const grid = allCards[0]?.closest('[class*="grid"]');
       if (grid) grid.insertAdjacentElement("beforebegin", bar);
     }
     bar.textContent = `✓ Progress: ${done} / ${cards.length} modules completed`;
@@ -661,6 +694,15 @@ const API_HOST = "http://localhost:8787";
       _lastSyncedPath = location.pathname;
       syncLabsFromApi(courseId, moduleId);
     }
+
+    // Re-run whenever the search input changes so overlays and buttons are
+    // injected on newly visible lab cards after filtering.
+    // rerenderLabCards() re-stamps pt-card-done and the button state on any
+    // already-tagged card whose DOM node React recycled during the re-render.
+    watchSearchInput(() => {
+      injectLabTrackers();
+      rerenderLabCards(moduleId);
+    });
   }
 
   // ══════════════════════════════════════════════════════════════════════════
